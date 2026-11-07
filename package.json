@@ -1,0 +1,25 @@
+{
+  "name": "transmission-emulators",
+  "version": "0.1.0",
+  "description": "Standalone dev/test transmission emulators for TamaDB (and future PamaDB): a producer load-harness and a consumer/webhook-sink. Not shipped as part of any product.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "producer": "tsx src/producer/index.ts",
+    "consumer": "tsx src/consumer/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "26.0.1",
+    "tsx": "4.22.4",
+    "typescript": "6.0.3",
+    "vitest": "4.1.9"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# Private / discretionary test datasets and run outputs stay out of the repo.
+test_cases/
+out/
+*.jsonl
+!docs/**/*.jsonl
