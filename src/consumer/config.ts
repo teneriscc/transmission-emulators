@@ -23,6 +23,12 @@ export interface ConsumerConfig {
   readonly sinkMode: SinkMode;
   /** Output file (save-jsonl) or directory (file-per-delivery). */
   readonly outputPath?: string;
+  /**
+   * Persist `{ headers, body }` (the TamaDB-* delivery headers plus the body)
+   * instead of the bare body. Off by default so a saved JSONL stays diffable
+   * against the producer's input.
+   */
+  readonly saveContext: boolean;
   readonly faults: FaultConfig;
   /** Auto-stop and print the summary after N idle ms with no deliveries (0 = run until Ctrl-C). */
   readonly idleStopMs: number;
@@ -47,6 +53,10 @@ LISTEN:
 SINK MODE:
   --sink <mode>            void | save-jsonl | file-per-delivery. Default: void.
   --out <path>             Output file (save-jsonl) or directory (file-per-delivery).
+  --save-context           Save { headers, body } (the TamaDB-* delivery headers
+                           plus the body) instead of the bare body. Default: off,
+                           so a saved JSONL stays diffable against producer input.
+                           Only acknowledged (2xx) attempts are saved either way.
 
 FAULT INJECTION (exercise TamaDB retry / fire-and-forget / backoff):
   --fault <action>         non-2xx | delay | drop. Default: non-2xx.
@@ -58,15 +68,25 @@ FAULT INJECTION (exercise TamaDB retry / fire-and-forget / backoff):
 
 LIFECYCLE / OUTPUT:
   --idle-stop <ms>         Auto-stop after this many idle ms with no deliveries
-                           (0 = run until Ctrl-C). Default: 0.
+                           (0 = run until Ctrl-C). Default: 0. Keep it above
+                           TamaDB's retry backoff (1/2/4/8/16 s) when testing
+                           faults, or the sink exits before the retries arrive.
   --json <path>            Write a machine-readable JSON summary on shutdown.
   --help                   Show this help.
 
 NOTES:
-  * Detects BOTH delivery formats (envelope / raw, TamaDB Req 35.5b) and
-    normalises them. Per-Document_Type / per-D-Id tallies and end-to-end latency
-    require the envelope's metadata; raw deliveries degrade those gracefully.
-  * Always responds 200 unless a fault is injected for that delivery.
+  * Targets the TamaDB 0.7.0 webhook contract. The body is the bare document by
+    default (payloadFormat "raw"); "envelope" is opt-in per subscription, and
+    older subscriptions keep the format they were created with, so both shapes
+    are detected per delivery.
+  * Every delivery carries TamaDB-Subscription-Id / -Document-Type / -D-Id /
+    -Enqueued-At headers (and -Path for node-scoped subscriptions). Context and
+    latency come from them for BOTH formats; envelope bodies are cross-checked.
+  * Always responds 200 unless a fault is injected for that delivery. A non-2xx
+    or dropped connection is a failed attempt: under "retry" TamaDB re-sends the
+    same body and headers (best-effort, in-memory queue, backoff 1/2/4/8/16 s).
+  * TamaDB in Docker, sink on the host: use callbackUrl
+    http://host.docker.internal:<port>/...  and bind the sink with --host 0.0.0.0.
 `;
 
 export function printConsumerHelp(): void {
@@ -83,6 +103,7 @@ export function parseConsumerConfig(argv: readonly string[]): ConsumerConfig | '
       path: { type: 'string' },
       sink: { type: 'string' },
       out: { type: 'string' },
+      'save-context': { type: 'boolean' },
       fault: { type: 'string' },
       'fault-every': { type: 'string' },
       'fault-rate': { type: 'string' },
@@ -106,6 +127,7 @@ export function parseConsumerConfig(argv: readonly string[]): ConsumerConfig | '
     path: normalisePath(values.path ?? '/'),
     sinkMode,
     ...(values.out !== undefined ? { outputPath: values.out } : {}),
+    saveContext: values['save-context'] ?? false,
     faults,
     idleStopMs: parseNonNegInt(values['idle-stop'], 0, '--idle-stop'),
     ...(values.json !== undefined ? { jsonOut: values.json } : {}),

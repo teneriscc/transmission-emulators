@@ -13,7 +13,7 @@
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { normaliseDelivery } from './delivery.js';
+import { normaliseDelivery, pickTamaDbHeaders } from './delivery.js';
 import { ConsumerMetrics, observe } from './metrics.js';
 import { createSink, type Sink } from './sinks.js';
 import { FaultInjector } from './faults.js';
@@ -38,7 +38,8 @@ export async function startSink(cfg: ConsumerConfig): Promise<RunningSink> {
   const sink: Sink = createSink(cfg.sinkMode, cfg.outputPath);
   const faults = new FaultInjector(cfg.faults);
 
-  let deliveryIndex = -1; // 0-based across the run, for fault scheduling + seq
+  let deliveryIndex = -1; // 0-based across all ATTEMPTS, drives fault scheduling
+  let acknowledgedCount = 0; // 1-based sequence of persisted (acknowledged) attempts
 
   const server = createServer((req, res) => {
     void handleRequest(req, res);
@@ -57,10 +58,13 @@ export async function startSink(cfg: ConsumerConfig): Promise<RunningSink> {
 
     const body = await readBody(req);
     const receivedAtMs = Date.now();
-    const seq = (deliveryIndex += 1) + 1;
+    deliveryIndex += 1;
 
-    // Decide fault for this delivery up-front (index is 0-based).
+    // Decide fault for this attempt up-front (index is 0-based).
     const faulted = faults.shouldFault(deliveryIndex);
+    // TamaDB counts a non-2xx (or no response) as a FAILED attempt and re-sends
+    // the same body + headers under `retry`. A `delay` fault still ends in 200.
+    const acknowledged = !faulted || faults.action === 'delay';
 
     // Parse + normalise. A non-JSON body is still a counted delivery; it
     // normalises to a raw delivery whose document is the raw text.
@@ -70,11 +74,19 @@ export async function startSink(cfg: ConsumerConfig): Promise<RunningSink> {
     } catch {
       parsed = body; // keep the raw text; normaliseDelivery treats it as raw
     }
-    const delivery = normaliseDelivery(parsed);
+    const delivery = normaliseDelivery(parsed, req.headers);
 
-    // Persist (void sink is a no-op). Do this before responding so save modes
-    // reflect what we acknowledged.
-    await sink.write({ seq, body: delivery.rawBody, receivedAtMs });
+    // Persist ONLY attempts we acknowledge, so a saved file holds each delivered
+    // job once (a failed attempt and its retry carry identical bodies; saving
+    // both would read as a duplicate when diffing against the producer input).
+    // Failed attempts are still counted in the metrics. The void sink is a no-op.
+    if (acknowledged) {
+      const persisted = cfg.saveContext
+        ? { headers: pickTamaDbHeaders(req.headers), body: delivery.rawBody }
+        : delivery.rawBody;
+      acknowledgedCount += 1;
+      await sink.write({ seq: acknowledgedCount, body: persisted, receivedAtMs });
+    }
 
     // Apply the fault (or respond 200).
     const respondedStatus = await respond(res, faulted, faults);

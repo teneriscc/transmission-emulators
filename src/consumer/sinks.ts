@@ -26,9 +26,12 @@ export type SinkMode = 'void' | 'save-jsonl' | 'file-per-delivery';
 
 /** What the server hands a sink for each accepted delivery. */
 export interface SinkRecord {
-  /** 1-based sequence number assigned by the server on receipt. */
+  /** 1-based sequence among ACKNOWLEDGED deliveries (failed attempts get none). */
   readonly seq: number;
-  /** Parsed JSON body, or the raw string if the body was not valid JSON. */
+  /**
+   * What to persist: the parsed JSON body (or the raw string if it was not
+   * JSON), or `{ headers, body }` when the sink runs with --save-context.
+   */
   readonly body: unknown;
   /** Receive wall-clock (ms) for filename/ordering. */
   readonly receivedAtMs: number;

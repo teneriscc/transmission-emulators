@@ -94,18 +94,63 @@ Full options:
 npm run consumer -- --help
 ```
 
-### Payload-format awareness
+### Webhook contract (TamaDB 0.7.0+)
 
-TamaDB delivers in one of two shapes, chosen **per subscription** by whoever
-created it (`payloadFormat`, default `envelope`; TamaDB Req 35.5b):
+The sink targets the **0.7.0 webhook contract** (a breaking change from 0.6.x).
 
-- **envelope** — `{ subscriptionId, dId, documentType, document, timestamp, path? }`
-- **raw** — the projected document itself, top-level
+**Body** — chosen **per subscription** by `options.payloadFormat`:
 
-The sink detects which arrived and normalises both. Per-Document_Type and
-per-D-Id tallies and end-to-end latency (server `timestamp` → received) come
-from the envelope metadata; a raw delivery degrades those gracefully to
-"unknown" / no latency sample.
+- **raw** (the default for new subscriptions) — the bare projected document, no
+  wrapper keys.
+- **envelope** (opt-in) — `{ subscriptionId, dId, documentType, path?, document, timestamp }`.
+
+Subscriptions created before 0.7.0 keep the format they were created with, so one
+TamaDB can deliver both shapes at once. The sink detects the shape per delivery.
+(An envelope is recognised by all five of its always-present keys, so a business
+document that merely has a `document` field is not mistaken for one.)
+
+**Headers** — on **every** delivery, in both formats:
+
+| Header | Value |
+|--------|-------|
+| `TamaDB-Subscription-Id` | the subscription that fired |
+| `TamaDB-Document-Type` | percent-encoded Document_Type |
+| `TamaDB-D-Id` | percent-encoded parts joined by `:` (split on `:` first, then decode each part) |
+| `TamaDB-Enqueued-At` | ISO-8601 UTC, ms precision; equals the envelope `timestamp` |
+| `TamaDB-Path` | only for a node-scoped subscription |
+
+Context therefore comes from the headers for **both** formats: per-Document_Type,
+per-subscription and per-D-Id tallies, and latency, all work for raw deliveries.
+An envelope body is cross-checked against its headers.
+
+**What the summary reports**
+
+- *Enqueue→receive latency* — from `TamaDB-Enqueued-At` to arrival. It includes
+  TamaDB's pump pickup delay and, on a retry, the backoff wait (the timestamp does
+  not change between attempts). It also assumes the TamaDB host/VM clock and this
+  machine's clock agree; with TamaDB in a VM or container, drift can skew it.
+- *Redeliveries vs duplicates* — a retry re-sends the same body and headers, so a
+  job is identified by (subscription, D-Id, enqueued-at). A repeat after a
+  **failed** attempt is a *redelivery* (expected under `retry`); a repeat after an
+  **acknowledged** one is a *duplicate* (suspect). Millisecond precision means two
+  distinct writes to one D-Id in the same millisecond would read as a duplicate.
+- *Contract warnings* — shown only when a delivery lacks required `TamaDB-*`
+  headers (e.g. a pre-0.7.0 server) or an envelope disagrees with its headers.
+
+**Delivery semantics to keep in mind:** delivery is best-effort and TamaDB's queue
+is in-memory (lost on restart). A non-2xx response or a dropped connection is a
+failed attempt; under `retry` TamaDB backs off 1/2/4/8/16 s and re-sends the same
+body and headers.
+
+**Saving.** By default a saved file holds the bare body, so a raw-format JSONL
+diffs directly against the producer's input. Only **acknowledged** (2xx)
+attempts are saved, so each delivered job appears once. Because raw bodies no
+longer carry Document_Type / D-Id / path, add `--save-context` to save
+`{ "headers": {...}, "body": ... }` instead.
+
+**TamaDB in Docker, sink on the host:** bind the sink with `--host 0.0.0.0` and
+use `http://host.docker.internal:<port>/` as the subscription `callbackUrl`
+(image `teneriscc/tamadb:0.7.0`).
 
 ### Fault injection (exercise TamaDB retry / fire-and-forget / backoff)
 
@@ -123,14 +168,16 @@ npm run consumer -- --port 4000 --fault drop --fault-every 3
 ### Lifecycle
 
 The sink runs until `Ctrl-C`, or until `--idle-stop <ms>` elapses with no
-deliveries (handy for scripted runs). On shutdown it prints a run summary and,
-with `--json <path>`, writes a machine-readable summary.
+deliveries (handy for scripted runs). When testing faults, keep `--idle-stop`
+above TamaDB's retry backoff (up to 16 s), or the sink exits before the retries
+arrive. On shutdown it prints a run summary and, with `--json <path>`, writes a
+machine-readable summary.
 
 ---
 
 ## End-to-end loop (the whole point)
 
-1. Start TamaDB (0.6.0+, with the webhook delivery pipeline).
+1. Start TamaDB (0.7.0+ — the consumer targets the 0.7.0 webhook contract).
 2. Configure schemas / Document_Types / channels in TamaDB.
 3. Start the consumer sink: `npm run consumer -- --port 4000 --sink save-jsonl --out out/received.jsonl`.
 4. Create a TamaDB subscription whose `callbackUrl` is `http://<sink-host>:4000/`.
@@ -154,8 +201,9 @@ src/
   producer/    Pure sender (lifted from the original producer emulator)
     config.ts, pacing.ts, errors.ts, sender.ts, engine.ts, index.ts
   consumer/    Pure receiver (webhook sink)
-    delivery.ts  envelope/raw normalisation (payload-format awareness)
-    metrics.ts   delivery metrics (e2e latency, per-type/D-Id, duplicates)
+    delivery.ts  0.7.0 contract: TamaDB-* headers + raw/envelope body detection
+    metrics.ts   delivery metrics (latency, per-type/subscription/D-Id,
+                 redeliveries vs duplicates, contract conformance)
     summary.ts   consumer run summary (human + JSON)
     sinks.ts     void / save-jsonl / file-per-delivery
     faults.ts    non-2xx / delay / drop fault injection

@@ -22,17 +22,22 @@ export interface ConsumerRunMeta {
 export interface ConsumerSummaryJson {
   readonly meta: ConsumerRunMeta;
   readonly totals: {
+    /** Delivery ATTEMPTS received (a retry counts again). */
     readonly received: number;
     readonly envelope: number;
     readonly raw: number;
     readonly faultsInjected: number;
     readonly duplicates: number;
+    readonly redeliveries: number;
+    readonly missingHeaderDeliveries: number;
+    readonly contextMismatches: number;
     readonly achievedRatePerSec: number;
   };
   readonly respondedStatus: Record<string, number>;
   readonly byDocumentType: Record<string, number>;
+  readonly bySubscription: Record<string, number>;
   readonly byDId: Record<string, number>;
-  readonly e2eLatencyMs: LatencyStats;
+  readonly enqueueToReceiveMs: LatencyStats;
 }
 
 export function buildConsumerSummaryJson(metrics: ConsumerMetrics, meta: ConsumerRunMeta): ConsumerSummaryJson {
@@ -45,17 +50,22 @@ export function buildConsumerSummaryJson(metrics: ConsumerMetrics, meta: Consume
       raw: metrics.rawCount,
       faultsInjected: metrics.faultsInjected,
       duplicates: metrics.duplicates,
+      redeliveries: metrics.redeliveries,
+      missingHeaderDeliveries: metrics.missingHeaderDeliveries,
+      contextMismatches: metrics.contextMismatches,
       achievedRatePerSec: round(achievedRatePerSec, 2),
     },
     respondedStatus: mapToObject(metrics.respondedStatus),
     byDocumentType: mapToObject(metrics.byDocumentType),
+    bySubscription: mapToObject(metrics.bySubscription),
     byDId: mapToObject(metrics.byDId),
-    e2eLatencyMs: metrics.e2eStats(),
+    enqueueToReceiveMs: metrics.latencyStats(),
   };
 }
 
 export function formatConsumerSummaryHuman(metrics: ConsumerMetrics, meta: ConsumerRunMeta): string {
   const j = buildConsumerSummaryJson(metrics, meta);
+  const t = j.totals;
   const lines: string[] = [];
 
   lines.push('');
@@ -63,11 +73,24 @@ export function formatConsumerSummaryHuman(metrics: ConsumerMetrics, meta: Consu
   lines.push(`Listening     : ${meta.listenUrl}`);
   lines.push(`Sink mode     : ${meta.sinkMode}${meta.outputPath ? `  (${meta.outputPath})` : ''}`);
   lines.push(`Duration      : ${(meta.durationMs / 1000).toFixed(2)} s`);
-  lines.push(`Received      : ${j.totals.received}  (~${j.totals.achievedRatePerSec} msg/s)`);
-  lines.push(`Format        : envelope ${j.totals.envelope}  /  raw ${j.totals.raw}`);
-  lines.push(`Duplicates    : ${j.totals.duplicates}`);
-  if (j.totals.faultsInjected > 0) {
-    lines.push(`Faults inject : ${j.totals.faultsInjected}`);
+  lines.push(`Received      : ${t.received} attempts  (~${t.achievedRatePerSec} /s)`);
+  lines.push(`Body format   : raw ${t.raw}  /  envelope ${t.envelope}`);
+  lines.push(`Redeliveries  : ${t.redeliveries}  (repeat after a failed attempt — expected under retry)`);
+  lines.push(`Duplicates    : ${t.duplicates}  (repeat after an acknowledged attempt)`);
+  if (t.faultsInjected > 0) {
+    lines.push(`Faults inject : ${t.faultsInjected}`);
+  }
+
+  // Contract conformance (TamaDB 0.7.0): surfaced only when something is off.
+  if (t.missingHeaderDeliveries > 0 || t.contextMismatches > 0) {
+    lines.push('');
+    lines.push('CONTRACT WARNINGS:');
+    if (t.missingHeaderDeliveries > 0) {
+      lines.push(`  ${t.missingHeaderDeliveries} deliveries lacked required TamaDB-* headers (pre-0.7.0 server?)`);
+    }
+    if (t.contextMismatches > 0) {
+      lines.push(`  ${t.contextMismatches} envelope deliveries disagreed with their headers`);
+    }
   }
 
   lines.push('');
@@ -79,20 +102,23 @@ export function formatConsumerSummaryHuman(metrics: ConsumerMetrics, meta: Consu
   if (Object.keys(j.byDocumentType).length > 0) {
     lines.push('');
     lines.push('By Document_Type:');
-    for (const [t, n] of sortEntries(j.byDocumentType)) {
-      lines.push(`  ${t} : ${n}`);
-    }
+    for (const [k, n] of sortEntries(j.byDocumentType)) lines.push(`  ${k} : ${n}`);
   }
 
-  const distinctDIds = Object.keys(j.byDId).length;
-  lines.push('');
-  lines.push(`Distinct D-Ids: ${distinctDIds}`);
+  if (Object.keys(j.bySubscription).length > 0) {
+    lines.push('');
+    lines.push('By subscription:');
+    for (const [k, n] of sortEntries(j.bySubscription)) lines.push(`  ${k} : ${n}`);
+  }
 
-  const l = j.e2eLatencyMs;
   lines.push('');
-  lines.push('End-to-end latency (ms, envelope deliveries only):');
+  lines.push(`Distinct D-Ids: ${Object.keys(j.byDId).length}`);
+
+  const l = j.enqueueToReceiveMs;
+  lines.push('');
+  lines.push('Enqueue→receive latency (ms, from TamaDB-Enqueued-At):');
   if (l.count === 0) {
-    lines.push('  (no samples — raw deliveries carry no server timestamp)');
+    lines.push('  (no samples — no usable TamaDB-Enqueued-At)');
   } else {
     lines.push(`  min ${fmt(l.min)}  mean ${fmt(l.mean)}  p50 ${fmt(l.p50)}  p95 ${fmt(l.p95)}  p99 ${fmt(l.p99)}  max ${fmt(l.max)}`);
   }
