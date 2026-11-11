@@ -1,5 +1,5 @@
 /**
- * Consumer — fault injection (brief §8: "Fault modes").
+ * Consumer — fault injection.
  *
  * Lets the sink deliberately misbehave so TamaDB's delivery behaviour can be
  * observed: `retry` vs `fire-and-forget`, backoff, and give-up. Three fault

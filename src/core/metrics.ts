@@ -1,8 +1,7 @@
 /**
  * Shared core — metrics accumulation and latency statistics.
  *
- * Concurrency-safety by design (addresses the "same code pushing and consuming
- * simultaneously could conflict" concern): there is NO shared mutable state
+ * Concurrency-safety by design: there is NO shared mutable state
  * here. Each virtual producer creates its own `Metrics` instance and mutates
  * only that instance. Instances are combined at the end via `mergeMetrics`,
  * which is a pure function returning a NEW instance. Nothing is written to a

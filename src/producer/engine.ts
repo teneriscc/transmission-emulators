@@ -1,7 +1,7 @@
 /**
  * Producer — run engine.
  *
- * Loads the JSONL, partitions work across N virtual producers (R9), and drives
+ * Loads the JSONL, partitions work across N virtual producers, and drives
  * each producer's send loop with its own Pacer, ErrorScheduler and Metrics
  * (per-instance state; merged at the end — see core/metrics.ts for the
  * concurrency rationale).
@@ -61,7 +61,7 @@ async function runProducer(
     // Respect --limit across the WHOLE run: each producer stops at its share.
     if (cfg.limit > 0 && sent >= perProducerLimit(cfg.limit, cfg.concurrency, producerIndex)) break;
 
-    // Optionally skip lines that are not valid JSON objects (R4).
+    // Optionally skip lines that are not valid JSON objects.
     if (cfg.skipInvalidInput && !isJsonObject(line.text)) continue;
 
     // Decide corruption for this message.
@@ -130,7 +130,7 @@ export async function run(cfg: ProducerConfig): Promise<RunResult> {
 
   // Exit non-zero only if we sent at least one message and EVERY send failed at
   // the transport layer (server unreachable). Individual TamaDB rejections are
-  // normal, counted outcomes and do not fail the run (R19).
+  // normal, counted outcomes and do not fail the run.
   const allTransportFailed = metrics.totalSent > 0 && metrics.transportFailures === metrics.totalSent;
   const exitCode = metrics.totalSent === 0 ? 0 : allTransportFailed ? 1 : 0;
 

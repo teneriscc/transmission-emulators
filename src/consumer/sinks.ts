@@ -1,5 +1,5 @@
 /**
- * Consumer — sink modes (brief §8).
+ * Consumer — sink modes.
  *
  *   void              accept and discard; measure throughput/latency only.
  *   save-jsonl        append each delivery as one JSON line to a .jsonl file

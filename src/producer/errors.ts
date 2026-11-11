@@ -1,11 +1,11 @@
 /**
- * Producer — deliberate error injection (brief §4.6, R13–R15).
+ * Producer — deliberate error injection.
  *
  * Two orthogonal concerns:
  *   1. SCHEDULING — decide WHICH messages get corrupted.
  *   2. KIND       — decide HOW a chosen message is corrupted.
  *
- * Parked (need per-D-Id awareness, deferred with optimistic-concurrency Q3):
+ * Not implemented (needs per-D-Id awareness):
  *   - `stale-version` error kind (VERSION_CONFLICT) — requires tracking the
  *     last returned versionNo per D-Id, which the opaque-line producer does not do.
  */
@@ -13,7 +13,7 @@
 import { isJsonObject } from '../core/jsonl.js';
 
 // ---------------------------------------------------------------------------
-// Seeded RNG (mulberry32) — reproducible error injection (§5, R13 random+seed).
+// Seeded RNG (mulberry32) — reproducible error injection.
 // ---------------------------------------------------------------------------
 
 export function makeRng(seed: number): () => number {
@@ -87,7 +87,7 @@ export interface CorruptedMessage {
   readonly body: string;
   /** Extra/overriding headers to merge (used by control-header-invalid). */
   readonly headerOverrides?: Record<string, string>;
-  /** Human-readable label of what was injected, for the log/summary (R15). */
+  /** Human-readable label of what was injected, for the log/summary. */
   readonly injectionLabel: string;
 }
 

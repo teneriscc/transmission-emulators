@@ -1,115 +1,104 @@
 # Transmission Emulators
 
-Standalone dev/test tooling for the TamaDB transmission layer (and, later,
-PamaDB). Two complementary command-line tools that exercise a **running** server
+Two small command-line tools for exercising a **running** [TamaDB](https://tamadb.cc)
 over real HTTP:
 
-- **Producer emulator** (`src/producer/`) — reads a JSONL file and pushes each
-  record to a TamaDB ingestion endpoint, with configurable pacing, concurrency,
-  control headers, and deliberate error injection.
-- **Consumer / webhook-sink emulator** (`src/consumer/`) — an HTTP endpoint that
-  receives TamaDB's webhook deliveries so the producer → TamaDB → consumer path
-  can be exercised and measured end to end.
+- **`tamadb-producer`** reads a JSONL file and pushes each record to a TamaDB
+  ingestion endpoint, with configurable pacing, concurrency, control headers and
+  deliberate error injection.
+- **`tamadb-sink`** is a webhook receiver. It accepts TamaDB's subscription
+  deliveries so the producer → TamaDB → consumer path can be exercised and
+  measured end to end.
 
-They share a small, side-effect-free core (`src/core/`): JSONL I/O, metric
-accumulation, and latency statistics.
+Both are development and test tools. They talk to a server you run yourself,
+have **zero runtime dependencies**, and need Node.js 22 or later.
 
-> **This is development tooling, not a product.** Neither tool is shipped or run
-> in CI by default. Both talk to a server the operator runs separately. This
-> repo was extracted from the TamaDB repo once the consumer sink gave the
-> emulator set a second reason to exist (the recorded trigger for extraction).
-
-## Why two separate tools, and why they can share a core
-
-Each tool runs as its own OS process. Sharing `src/core/` is **source reuse**,
-not runtime coupling: every process loads its own private copy, and the core
-holds **no module-level mutable state** — each producer/consumer owns its own
-`Metrics`/`ConsumerMetrics` instance and merges with a pure function. So any
-number of producers and consumers can run in parallel (many-to-many across
-VMs/containers, or co-located daemons) with no cross-talk and no shared-core
-penalty. The only genuinely shared resources are the TamaDB server itself and
-host CPU/NIC/disk when co-locating — independent of the code sharing.
-
-## Requirements
-
-- Node.js ≥ 22 (built-in `fetch`, `http`, `AbortController`, `util.parseArgs`).
-- `tsx` + `typescript` (devDependencies). **Zero runtime dependencies.**
+## Install
 
 ```bash
-npm install
+npm install -g transmission-emulators
+tamadb-producer --help
+tamadb-sink --help
 ```
+
+Or run without installing:
+
+```bash
+npx -p transmission-emulators tamadb-sink --help
+```
+
+## Compatibility
+
+| Tool | Needs TamaDB | Why |
+|------|--------------|-----|
+| `tamadb-producer` | 0.3.0 or later | Sends the bare-body ingestion format with `TamaDB-*` control headers. |
+| `tamadb-sink` | 0.7.0 or later | Targets the 0.7.0 webhook contract (raw body by default, delivery context in headers). Against an older server it still receives, but reports contract warnings. |
 
 ---
 
 ## Producer
 
-Pushes a JSONL file to a running TamaDB over HTTP. Assumes TamaDB is already
-configured (schemas / Document_Types / channels); it is a **pure producer** and
-registers nothing. Each line is sent as the **bare JSON body** (no wrapper) with
-optional `TamaDB-*` control headers.
+Pushes a JSONL file to a running TamaDB. It assumes TamaDB is already configured
+(schemas, Document_Types, channels). It is a **pure producer** and registers
+nothing. Each line is sent as the **bare JSON body**, with optional `TamaDB-*`
+control headers.
 
 ```bash
-npm run producer -- \
+tamadb-producer \
   --file data/orders.jsonl \
   --type orders \
   --url http://localhost:3000 \
   --delay 10
 ```
 
-Full options:
+Highlights (see `tamadb-producer --help` for everything):
 
-```bash
-npm run producer -- --help
-```
+- **Pacing:** `--delay`, `--rate`, `--ramp`, `--burst`.
+- **Concurrency:** `--concurrency` virtual producers.
+- **Control headers:** `--h-version`, `--h-ttl`, `--h-expire-at`, `--h-schema`.
+- **Error injection:** `--error-every`, `--error-rate`, `--error-after`,
+  `--error-burst`, combined with `--error-kind`
+  (`transport-malformed`, `schema-invalid`, `control-header-invalid`).
+- **Output:** a human summary (status-code and TamaDB-code tallies, quarantine
+  counts, latency percentiles) and `--json <path>` for a machine-readable one.
 
-Highlights: pacing (`--delay` / `--rate` / `--ramp` / `--burst`), concurrency
-(`--concurrency`), control headers (`--h-version` / `--h-ttl` / `--h-expire-at`
-/ `--h-schema`), error injection (`--error-every` / `--error-rate` /
-`--error-after` / `--error-burst` × `--error-kind`), and a human + JSON run
-summary (status-code / TamaDB-code tallies, quarantine counts, latency
-percentiles).
+Exit codes: `0` ran to completion (TamaDB rejecting individual messages is a
+counted outcome, not a failure), `1` the server was unreachable, `2` bad
+arguments, `3` unexpected error.
 
 ---
 
-## Consumer / Webhook-Sink
+## Sink
 
-Receives TamaDB webhook deliveries. **The operator pre-creates the TamaDB
-subscription** whose `callbackUrl` points at this sink — consistent with the
-producer being a pure sender, the sink is a pure receiver and registers nothing.
-
-```bash
-# Void sink (discard, measure only) — the simplest mode
-npm run consumer -- --port 4000
-
-# Save every delivery as one JSON line (round-trip diffing vs producer input)
-npm run consumer -- --port 4000 --sink save-jsonl --out out/received.jsonl
-
-# One .json file per delivery (inspect payloads; stress high-volume file output)
-npm run consumer -- --port 4000 --sink file-per-delivery --out out/deliveries
-```
-
-Full options:
+Receives TamaDB webhook deliveries. **You create the TamaDB subscription**, with
+a `callbackUrl` pointing at the sink. The sink is a pure receiver and registers
+nothing.
 
 ```bash
-npm run consumer -- --help
+# Discard deliveries, measure only (the simplest mode)
+tamadb-sink --port 4000
+
+# Save every acknowledged delivery as one JSON line
+tamadb-sink --port 4000 --sink save-jsonl --out out/received.jsonl
+
+# One .json file per delivery
+tamadb-sink --port 4000 --sink file-per-delivery --out out/deliveries
 ```
 
 ### Webhook contract (TamaDB 0.7.0+)
 
-The sink targets the **0.7.0 webhook contract** (a breaking change from 0.6.x).
+**Body.** Chosen per subscription by `options.payloadFormat`:
 
-**Body** — chosen **per subscription** by `options.payloadFormat`:
-
-- **raw** (the default for new subscriptions) — the bare projected document, no
+- **raw** (the default for new subscriptions): the bare projected document, no
   wrapper keys.
-- **envelope** (opt-in) — `{ subscriptionId, dId, documentType, path?, document, timestamp }`.
+- **envelope** (opt-in): `{ subscriptionId, dId, documentType, path?, document, timestamp }`.
 
 Subscriptions created before 0.7.0 keep the format they were created with, so one
 TamaDB can deliver both shapes at once. The sink detects the shape per delivery.
-(An envelope is recognised by all five of its always-present keys, so a business
-document that merely has a `document` field is not mistaken for one.)
+An envelope is recognised only when all five of its always-present keys are there,
+so a business document that merely has a `document` field is not mistaken for one.
 
-**Headers** — on **every** delivery, in both formats:
+**Headers.** On every delivery, in both formats:
 
 | Header | Value |
 |--------|-------|
@@ -119,108 +108,111 @@ document that merely has a `document` field is not mistaken for one.)
 | `TamaDB-Enqueued-At` | ISO-8601 UTC, ms precision; equals the envelope `timestamp` |
 | `TamaDB-Path` | only for a node-scoped subscription |
 
-Context therefore comes from the headers for **both** formats: per-Document_Type,
-per-subscription and per-D-Id tallies, and latency, all work for raw deliveries.
-An envelope body is cross-checked against its headers.
+Context comes from the headers for **both** formats, so per-Document_Type,
+per-subscription and per-D-Id tallies and latency all work for raw deliveries. An
+envelope body is cross-checked against its headers.
 
-**What the summary reports**
+**Delivery semantics.** Delivery is best-effort and TamaDB's queue is in-memory
+(lost on restart). A non-2xx response or a dropped connection is a failed attempt.
+Under `retry`, TamaDB backs off 1/2/4/8/16 s and re-sends the same body and
+headers.
 
-- *Enqueue→receive latency* — from `TamaDB-Enqueued-At` to arrival. It includes
+### What the summary reports
+
+- **Enqueue→receive latency**, from `TamaDB-Enqueued-At` to arrival. It includes
   TamaDB's pump pickup delay and, on a retry, the backoff wait (the timestamp does
-  not change between attempts). It also assumes the TamaDB host/VM clock and this
-  machine's clock agree; with TamaDB in a VM or container, drift can skew it.
-- *Redeliveries vs duplicates* — a retry re-sends the same body and headers, so a
+  not change between attempts). It assumes the TamaDB host and this machine agree
+  on the time; with TamaDB in a VM or container, clock drift can skew it.
+- **Redeliveries vs duplicates.** A retry re-sends the same body and headers, so a
   job is identified by (subscription, D-Id, enqueued-at). A repeat after a
-  **failed** attempt is a *redelivery* (expected under `retry`); a repeat after an
+  **failed** attempt is a *redelivery* (expected under `retry`). A repeat after an
   **acknowledged** one is a *duplicate* (suspect). Millisecond precision means two
   distinct writes to one D-Id in the same millisecond would read as a duplicate.
-- *Contract warnings* — shown only when a delivery lacks required `TamaDB-*`
-  headers (e.g. a pre-0.7.0 server) or an envelope disagrees with its headers.
+- **Contract warnings**, shown only when a delivery lacks required `TamaDB-*`
+  headers (for example a pre-0.7.0 server) or an envelope disagrees with its
+  headers.
 
-**Delivery semantics to keep in mind:** delivery is best-effort and TamaDB's queue
-is in-memory (lost on restart). A non-2xx response or a dropped connection is a
-failed attempt; under `retry` TamaDB backs off 1/2/4/8/16 s and re-sends the same
-body and headers.
+### Saving
 
-**Saving.** By default a saved file holds the bare body, so a raw-format JSONL
-diffs directly against the producer's input. Only **acknowledged** (2xx)
-attempts are saved, so each delivered job appears once. Because raw bodies no
-longer carry Document_Type / D-Id / path, add `--save-context` to save
-`{ "headers": {...}, "body": ... }` instead.
+By default a saved file holds the bare body, so a raw-format JSONL diffs directly
+against the producer's input. Only **acknowledged** (2xx) attempts are saved, so
+each delivered job appears once even when faults were injected. Failed attempts
+still count in the summary. Raw bodies no longer carry Document_Type, D-Id or path,
+so add `--save-context` to save `{ "headers": {...}, "body": ... }` instead.
 
-**TamaDB in Docker, sink on the host:** bind the sink with `--host 0.0.0.0` and
-use `http://host.docker.internal:<port>/` as the subscription `callbackUrl`
-(image `teneriscc/tamadb:0.7.0`).
+### Fault injection
 
-### Fault injection (exercise TamaDB retry / fire-and-forget / backoff)
+Exercise TamaDB's retry and backoff behaviour:
 
 ```bash
-# Return 500 on every 5th delivery
-npm run consumer -- --port 4000 --fault non-2xx --fault-every 5 --fault-status 500
+# Return 503 on every 5th delivery
+tamadb-sink --port 4000 --fault non-2xx --fault-every 5 --fault-status 503
 
-# Add a 2s delay to ~10% of deliveries (seeded, reproducible)
-npm run consumer -- --port 4000 --fault delay --fault-rate 10 --fault-delay 2000 --seed 42
+# Hold ~10% of responses for 2 s (seeded, reproducible)
+tamadb-sink --port 4000 --fault delay --fault-rate 10 --fault-delay 2000 --seed 42
 
 # Drop the connection (no response) on every 3rd delivery
-npm run consumer -- --port 4000 --fault drop --fault-every 3
+tamadb-sink --port 4000 --fault drop --fault-every 3
 ```
 
 ### Lifecycle
 
-The sink runs until `Ctrl-C`, or until `--idle-stop <ms>` elapses with no
-deliveries (handy for scripted runs). When testing faults, keep `--idle-stop`
-above TamaDB's retry backoff (up to 16 s), or the sink exits before the retries
-arrive. On shutdown it prints a run summary and, with `--json <path>`, writes a
-machine-readable summary.
+The sink runs until `Ctrl-C`, or until `--idle-stop <ms>` passes with no
+deliveries (handy for scripts). When testing faults, keep `--idle-stop` above
+TamaDB's retry backoff (up to 16 s), or the sink exits before the retries arrive.
+On shutdown it prints a summary and, with `--json <path>`, writes a
+machine-readable one.
+
+### TamaDB in Docker, sink on the host
+
+Bind the sink to all interfaces (`--host 0.0.0.0`; the default `127.0.0.1` is not
+reachable from a container) and use `http://host.docker.internal:<port>/` as the
+subscription's `callbackUrl`.
 
 ---
 
-## End-to-end loop (the whole point)
+## End-to-end loop
 
-1. Start TamaDB (0.7.0+ — the consumer targets the 0.7.0 webhook contract).
-2. Configure schemas / Document_Types / channels in TamaDB.
-3. Start the consumer sink: `npm run consumer -- --port 4000 --sink save-jsonl --out out/received.jsonl`.
-4. Create a TamaDB subscription whose `callbackUrl` is `http://<sink-host>:4000/`.
-5. Run the producer to push traffic: `npm run producer -- --file ... --type ...`.
-6. Compare producer-sent vs consumer-received; read both run summaries.
+1. Start TamaDB (0.7.0 or later) and configure its schemas, Document_Types and channels.
+2. Start the sink: `tamadb-sink --port 4000 --sink save-jsonl --out out/received.jsonl`.
+3. Create a TamaDB subscription whose `callbackUrl` is `http://<sink-host>:4000/`.
+4. Run the producer: `tamadb-producer --file data/orders.jsonl --type orders`.
+5. Compare what was sent with what was received, and read both summaries.
 
-## Typecheck
+## Running several at once
+
+Each process is independent: it owns its own metrics and shares no state with any
+other. You can run many producers and sinks in parallel, on one machine or across
+VMs and containers. The shared resources are TamaDB itself and, when co-located,
+the host's CPU, network and disk. The sink's `file-per-delivery` mode is the
+heaviest on the filesystem.
+
+## Develop from source
 
 ```bash
+npm install
+npm run producer -- --help      # runs src/ through tsx
+npm run sink -- --help
 npm run typecheck
+npm run build                   # emits dist/, which is what the package ships
 ```
-
-## Layout
 
 ```
 src/
-  core/        Shared, reentrant, side-effect-free helpers
-    jsonl.ts     Streaming JSONL reader
-    metrics.ts   Send-side metric accumulator + latency stats + pure merge
-    summary.ts   Producer summary + shared formatting helpers
-  producer/    Pure sender (lifted from the original producer emulator)
-    config.ts, pacing.ts, errors.ts, sender.ts, engine.ts, index.ts
-  consumer/    Pure receiver (webhook sink)
-    delivery.ts  0.7.0 contract: TamaDB-* headers + raw/envelope body detection
-    metrics.ts   delivery metrics (latency, per-type/subscription/D-Id,
-                 redeliveries vs duplicates, contract conformance)
-    summary.ts   consumer run summary (human + JSON)
-    sinks.ts     void / save-jsonl / file-per-delivery
-    faults.ts    non-2xx / delay / drop fault injection
-    config.ts    CLI parsing
-    server.ts    HTTP receiver (Node built-in http)
-    index.ts     CLI entry point
-
-docs/
-  producer-emulator-requirements.md   Original producer brief (§8 = consumer spec)
+  core/       shared helpers: JSONL reader, metrics, latency stats, summary formatting
+  producer/   the producer: config, pacing, error injection, sender, engine, CLI entry
+  consumer/   the sink: delivery contract, metrics, sink modes, faults, server, CLI entry
 ```
 
-## Data & safety
+## Safety
 
-- Reads JSONL datasets from the private, git-ignored `test_cases/` (never
-  committed). Run outputs go to the git-ignored `out/`.
-- Neither tool transmits project code or secrets anywhere; the producer only
-  POSTs the operator-provided JSONL to the operator-provided URL, and the sink
-  only receives what the operator's subscription sends it.
-- Defaults are public-safe: `http://localhost:3000` (producer target),
-  `127.0.0.1:4000` (sink bind). No private hostnames or local paths baked in.
+- The producer only POSTs the JSONL you give it to the URL you give it. The sink
+  only receives what your subscription sends it. Nothing is sent anywhere else.
+- Defaults are local: the producer targets `http://localhost:3000` and the sink
+  binds `127.0.0.1:4000`.
+- Keep your test datasets out of version control. Run outputs under `out/` are
+  git-ignored.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).

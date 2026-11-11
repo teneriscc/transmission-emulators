@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * TamaDB Producer Emulator — CLI entry point.
  *
@@ -5,8 +6,8 @@
  * TamaDB ingestion endpoint, with configurable pacing, concurrency, control
  * headers and deliberate error injection. Prints a run summary.
  *
- * Run:  tsx scripts/producer-emulator/src/producer/index.ts --file <path> --type <documentType> [options]
- * Help: tsx scripts/producer-emulator/src/producer/index.ts --help
+ * Run:  tamadb-producer --file <path> --type <documentType> [options]
+ * Help: tamadb-producer --help
  */
 
 import { writeFile } from 'node:fs/promises';
@@ -29,10 +30,10 @@ async function main(): Promise<number> {
 
   const result = await run(cfg);
 
-  // Human-readable summary to stdout (R18).
+  // Human-readable summary to stdout.
   process.stdout.write(result.human + '\n');
 
-  // Optional machine-readable JSON summary (R18).
+  // Optional machine-readable JSON summary.
   if (cfg.jsonOut) {
     await writeFile(cfg.jsonOut, JSON.stringify(result.json, null, 2), 'utf8');
     process.stdout.write(`\nJSON summary written to ${cfg.jsonOut}\n`);

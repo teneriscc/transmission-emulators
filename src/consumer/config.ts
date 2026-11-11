@@ -43,7 +43,7 @@ The OPERATOR pre-creates a TamaDB subscription pointing its callbackUrl at this
 sink. This tool does not register anything; it only receives.
 
 USAGE:
-  tsx src/consumer/index.ts [options]
+  tamadb-sink [options]
 
 LISTEN:
   --host <host>            Bind host. Default: 127.0.0.1

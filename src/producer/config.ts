@@ -2,7 +2,7 @@
  * Producer — configuration type and CLI argument parsing.
  *
  * Zero-dependency arg parsing (no yargs/commander) to honour the "zero new
- * runtime dependencies" constraint (§5). Uses Node's built-in `util.parseArgs`.
+ * runtime dependencies" constraint. Uses Node's built-in `util.parseArgs`.
  */
 
 import { parseArgs } from 'node:util';
@@ -27,9 +27,9 @@ export interface ProducerConfig {
   readonly errorSchedule: ErrorSchedule;
   readonly errorKind: ErrorKind;
   readonly controlHeaders: ControlHeaderConfig;
-  /** Skip lines that are not valid JSON objects instead of sending them (R4). */
+  /** Skip lines that are not valid JSON objects instead of sending them. */
   readonly skipInvalidInput: boolean;
-  /** Optional path to write a machine-readable JSON summary (R18). */
+  /** Optional path to write a machine-readable JSON summary. */
   readonly jsonOut?: string;
   /** Maximum lines to send (0 = all). Handy for smoke tests. */
   readonly limit: number;
@@ -41,7 +41,7 @@ const HELP = `
 TamaDB Producer Emulator — push a JSONL file to a running TamaDB over HTTP.
 
 USAGE:
-  tsx scripts/producer-emulator/src/producer/index.ts --file <path> --type <documentType> [options]
+  tamadb-producer --file <path> --type <documentType> [options]
 
 REQUIRED:
   --file <path>            JSONL file, one document per line.
@@ -90,8 +90,8 @@ OUTPUT:
 NOTES:
   * Sends each line as the BARE JSON body (no wrapper) with Content-Type: application/json.
   * Assumes TamaDB is already configured (schemas/types/channels). Pure producer.
-  * The bare-body wire format lives on branch feature/ingestion-bare-wire-format;
-    run the server from that branch until it merges to main.
+  * Requires TamaDB 0.3.0 or later (the bare-body wire format). Older servers
+    expect a wrapped body and will reject these requests.
 `;
 
 export function printHelp(): void {

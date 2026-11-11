@@ -1,5 +1,5 @@
 /**
- * Producer — pacing (brief §4.2 R5–R7) and bursting (§4.3 R8).
+ * Producer — pacing and bursting.
  *
  * A Pacer decides how long to wait before sending message number `i` (0-based).
  * All time is derived from a run-relative clock (`elapsedMs`) so ramp and rate
@@ -10,10 +10,10 @@
 
 export type PacingMode =
   | { kind: 'none' } // as fast as possible
-  | { kind: 'delay'; ms: number } // fixed inter-message delay (R5)
-  | { kind: 'rate'; perSec: number } // target msgs/sec (R6)
-  | { kind: 'ramp'; startPerSec: number; endPerSec: number; overMs: number } // (R7)
-  | { kind: 'burst'; n: number; gapMs: number }; // N back-to-back then pause (R8)
+  | { kind: 'delay'; ms: number } // fixed inter-message delay
+  | { kind: 'rate'; perSec: number } // target msgs/sec
+  | { kind: 'ramp'; startPerSec: number; endPerSec: number; overMs: number } // linear rate ramp
+  | { kind: 'burst'; n: number; gapMs: number }; // N back-to-back then pause
 
 export interface Pacer {
   /**

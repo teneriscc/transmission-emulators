@@ -3,13 +3,12 @@
  *
  * Reentrant and side-effect-free: each call returns a fresh async iterator over
  * its own file handle / stream. No module-level mutable state, so it is safe to
- * use concurrently (e.g. multiple virtual producers, or a future consumer sink
- * writing JSONL) without cross-talk.
+ * use concurrently (e.g. multiple virtual producers) without cross-talk.
  *
  * Design notes:
- * - The emulator treats each line as OPAQUE JSON to send verbatim (brief §3).
+ * - The emulator treats each line as OPAQUE JSON to send verbatim.
  *   This reader therefore yields the raw line text, not a parsed object — the
- *   producer must be able to send even syntactically-invalid lines (R4) to
+ *   producer must be able to send even syntactically-invalid lines to
  *   exercise TamaDB's PARSE_ERROR path.
  * - Blank lines and trailing whitespace-only lines are skipped (they are not
  *   documents). A `#`-prefixed line is NOT treated as a comment: JSONL has no

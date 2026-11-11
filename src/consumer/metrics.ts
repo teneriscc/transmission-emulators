@@ -1,5 +1,5 @@
 /**
- * Consumer — delivery metrics (brief §8: "Delivery metrics").
+ * Consumer — delivery metrics.
  *
  * Concurrency discipline mirrors the producer's core/metrics.ts: there is NO
  * shared mutable state beyond a single instance. The server owns ONE

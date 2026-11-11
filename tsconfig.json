@@ -1,5 +1,5 @@
 {
-  "//": "Typecheck config for the transmission emulators. Run: npm run typecheck",
+  "//": "Typecheck config for the transmission emulators. Run: npm run typecheck. Emit settings live in tsconfig.build.json.",
   "compilerOptions": {
     "target": "ES2022",
     "module": "NodeNext",
@@ -16,5 +16,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }

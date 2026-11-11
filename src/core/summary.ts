@@ -6,7 +6,7 @@
  * where to print/write, keeping this reentrant and consumer-agnostic.
  *
  * This module serves BOTH emulators. The producer summary (buildSummaryJson /
- * formatSummaryHuman + RunMeta) is unchanged from the original producer tool.
+ * formatSummaryHuman + RunMeta) serves the producer.
  * The consumer sink has its own metrics/summary shape — see
  * src/consumer/metrics.ts — because its observations (end-to-end latency,
  * gaps/duplicates, per-type tallies) differ from send-side metrics.

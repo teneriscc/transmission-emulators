@@ -1,25 +1,48 @@
 {
   "name": "transmission-emulators",
   "version": "0.1.0",
-  "description": "Standalone dev/test transmission emulators for TamaDB (and future PamaDB): a producer load-harness and a consumer/webhook-sink. Not shipped as part of any product.",
+  "description": "Producer load-harness and webhook-sink emulators for exercising a running TamaDB over real HTTP. Zero runtime dependencies.",
+  "keywords": [
+    "tamadb",
+    "emulator",
+    "webhook",
+    "load-test",
+    "producer",
+    "consumer",
+    "jsonl"
+  ],
+  "homepage": "https://tamadb.cc",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/teneriscc/transmission-emulators.git"
+  },
+  "bugs": {
+    "url": "https://github.com/teneriscc/transmission-emulators/issues"
+  },
+  "license": "Apache-2.0",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
-  "private": true,
-  "license": "Apache-2.0",
+  "bin": {
+    "tamadb-producer": "dist/producer/index.js",
+    "tamadb-sink": "dist/consumer/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "producer": "tsx src/producer/index.ts",
-    "consumer": "tsx src/consumer/index.ts",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint .",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "producer": "tsx src/producer/index.ts",
+    "sink": "tsx src/consumer/index.ts",
+    "prepublishOnly": "npm run typecheck && npm run build"
   },
   "devDependencies": {
     "@types/node": "26.0.1",
     "tsx": "4.22.4",
-    "typescript": "6.0.3",
-    "vitest": "4.1.9"
+    "typescript": "6.0.3"
   }
 }

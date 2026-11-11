@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * TamaDB Consumer / Webhook-Sink Emulator — CLI entry point.
  *
@@ -6,8 +7,8 @@
  * envelope/raw payload format, persists via the chosen sink mode, optionally
  * injects faults, and prints a run summary on shutdown.
  *
- * Run:  tsx src/consumer/index.ts [options]
- * Help: tsx src/consumer/index.ts --help
+ * Run:  tamadb-sink [options]
+ * Help: tamadb-sink --help
  */
 
 import { writeFile } from 'node:fs/promises';

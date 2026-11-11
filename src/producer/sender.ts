@@ -1,10 +1,10 @@
 /**
- * Producer — HTTP sender (brief §4.1 R1–R3).
+ * Producer — HTTP sender.
  *
  * Sends ONE message as the bare JSON body with Content-Type: application/json,
  * plus optional TamaDB-* control headers. Uses Node's built-in fetch (no deps).
  *
- * Distinguishes two failure classes (R19):
+ * Distinguishes two failure classes:
  *   - transportFailure: the request never reached / got a response from the
  *     server (DNS, connection refused, timeout). This is a run-level problem.
  *   - a TamaDB error response (4xx/5xx with a `code`): a normal, counted outcome.
