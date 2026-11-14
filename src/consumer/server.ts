@@ -90,7 +90,10 @@ export async function startSink(cfg: ConsumerConfig): Promise<RunningSink> {
 
     // Apply the fault (or respond 200).
     const respondedStatus = await respond(res, faulted, faults);
-    metrics.record(observe(delivery, receivedAtMs, respondedStatus, faulted));
+    metrics.record(observe(delivery, receivedAtMs, respondedStatus, faulted, cfg.requireHeaders));
+    if (cfg.print) {
+      printDelivery(receivedAtMs, pathOnly, respondedStatus, delivery.format, pickTamaDbHeaders(req.headers), body);
+    }
     touchActivity();
   }
 
@@ -130,6 +133,29 @@ export async function startSink(cfg: ConsumerConfig): Promise<RunningSink> {
   };
 
   return running;
+}
+
+/**
+ * Print one delivery to stdout (--print). The body is printed exactly as it
+ * arrived on the wire, so a malformed body is shown as-is.
+ */
+function printDelivery(
+  receivedAtMs: number,
+  path: string,
+  status: number,
+  format: string,
+  tamadbHeaders: Record<string, string>,
+  body: string,
+): void {
+  const outcome = status === 0 ? 'dropped' : String(status);
+  const lines = [`${new Date(receivedAtMs).toISOString()} POST ${path} -> ${outcome}  ${format}`];
+  lines.push(
+    Object.keys(tamadbHeaders).length > 0
+      ? `  headers: ${JSON.stringify(tamadbHeaders)}`
+      : '  headers: (no TamaDB-* headers)',
+  );
+  lines.push(`  body:    ${body}`);
+  process.stdout.write(lines.join('\n') + '\n');
 }
 
 /** Collect the full request body as a UTF-8 string. */

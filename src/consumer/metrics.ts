@@ -10,17 +10,19 @@
  * handling across worker_threads, keep one instance per worker and merge with
  * `mergeConsumerMetrics` (a pure function returning a NEW instance).
  *
- * Retry awareness (0.7.0 contract): a retry re-sends the SAME body and headers,
- * so `TamaDB-Enqueued-At` is identical across attempts of one job. That makes
+ * Retry awareness: a retry re-sends the SAME body and headers, so the
+ * enqueued-at value is identical across attempts of one job. That makes
  * (subscription, D-Id, enqueuedAt) a stable job key:
  *   - seen again after a FAILED attempt  -> a redelivery (expected under retry)
  *   - seen again after an ACKNOWLEDGED one -> a duplicate (suspect)
- * Limit: enqueuedAt has millisecond precision, so two distinct writes to the
+ * Limits: enqueuedAt has millisecond precision, so two distinct writes to the
  * same D-Id within one millisecond would share a key and read as a duplicate.
+ * A raw delivery with no TamaDB-* headers carries no subscription, D-Id or
+ * enqueued-at at all, so it has no job key and cannot be classified either way.
  */
 
 import { latencyStats, type LatencyStats } from '../core/metrics.js';
-import type { DeliveryFormat, NormalisedDelivery, WireDId } from './delivery.js';
+import type { DeliveryFormat, NormalisedDelivery, ProtocolMetadataState, WireDId } from './delivery.js';
 import { dIdKey } from './delivery.js';
 
 /** One observed delivery attempt, as seen by the sink. */
@@ -42,7 +44,12 @@ export interface DeliveryObservation {
   readonly faultInjected: boolean;
   /** Job key; present only when subscription, D-Id and enqueuedAt are all known. */
   readonly jobKey?: string | undefined;
-  /** Required delivery headers that were missing/unusable. */
+  /** Whether the TamaDB-* headers were present, absent or partial. */
+  readonly protocolMetadata: ProtocolMetadataState;
+  /**
+   * Required headers missing or unusable, counted only when that is a contract
+   * problem: always for "partial", and for "absent" only with --require-headers.
+   */
   readonly missingHeaderCount: number;
   /** Envelope-vs-header disagreements. */
   readonly mismatchCount: number;
@@ -57,8 +64,16 @@ export class ConsumerMetrics {
   duplicates = 0;
   /** Repeat of a job whose earlier attempt(s) all failed (expected for retry). */
   redeliveries = 0;
-  /** Deliveries missing at least one required TamaDB-* delivery header. */
+  /** Deliveries with a header problem (see DeliveryObservation.missingHeaderCount). */
   missingHeaderDeliveries = 0;
+  /** Deliveries that carried every required TamaDB-* header. */
+  headersPresent = 0;
+  /** Deliveries with no TamaDB-* headers (normal from 0.8.0 unless opted in). */
+  headersAbsent = 0;
+  /** Deliveries with some but not all required headers. */
+  headersPartial = 0;
+  /** Deliveries whose Document_Type could not be determined (raw with no headers). */
+  unattributed = 0;
   /** Envelope deliveries whose body disagreed with the headers. */
   contextMismatches = 0;
 
@@ -84,6 +99,10 @@ export class ConsumerMetrics {
     if (o.faultInjected) this.faultsInjected += 1;
     if (o.missingHeaderCount > 0) this.missingHeaderDeliveries += 1;
     if (o.mismatchCount > 0) this.contextMismatches += 1;
+    if (o.protocolMetadata === 'present') this.headersPresent += 1;
+    else if (o.protocolMetadata === 'absent') this.headersAbsent += 1;
+    else this.headersPartial += 1;
+    if (o.documentType === undefined) this.unattributed += 1;
 
     bump(this.respondedStatus, o.respondedStatus);
     bump(this.byDocumentType, o.documentType ?? '(unknown)');
@@ -125,6 +144,7 @@ export function observe(
   receivedAtMs: number,
   respondedStatus: number,
   faultInjected: boolean,
+  requireHeaders: boolean = false,
 ): DeliveryObservation {
   const c = d.context;
 
@@ -148,7 +168,11 @@ export function observe(
     respondedStatus,
     faultInjected,
     jobKey,
-    missingHeaderCount: d.missingHeaders.length,
+    protocolMetadata: d.protocolMetadata,
+    missingHeaderCount:
+      d.protocolMetadata === 'partial' || (requireHeaders && d.protocolMetadata === 'absent')
+        ? d.missingHeaders.length
+        : 0,
     mismatchCount: d.mismatches.length,
   };
 }
@@ -165,6 +189,10 @@ export function mergeConsumerMetrics(parts: readonly ConsumerMetrics[]): Consume
     out.redeliveries += m.redeliveries;
     out.missingHeaderDeliveries += m.missingHeaderDeliveries;
     out.contextMismatches += m.contextMismatches;
+    out.headersPresent += m.headersPresent;
+    out.headersAbsent += m.headersAbsent;
+    out.headersPartial += m.headersPartial;
+    out.unattributed += m.unattributed;
     for (const [k, v] of m.respondedStatus) out.respondedStatus.set(k, (out.respondedStatus.get(k) ?? 0) + v);
     for (const [k, v] of m.byDocumentType) out.byDocumentType.set(k, (out.byDocumentType.get(k) ?? 0) + v);
     for (const [k, v] of m.byDId) out.byDId.set(k, (out.byDId.get(k) ?? 0) + v);

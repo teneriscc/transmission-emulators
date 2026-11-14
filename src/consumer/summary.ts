@@ -17,6 +17,8 @@ export interface ConsumerRunMeta {
   readonly startedAt: string;
   readonly finishedAt: string;
   readonly durationMs: number;
+  /** Whether --require-headers was set (changes what counts as a warning). */
+  readonly requireHeaders: boolean;
 }
 
 export interface ConsumerSummaryJson {
@@ -31,7 +33,15 @@ export interface ConsumerSummaryJson {
     readonly redeliveries: number;
     readonly missingHeaderDeliveries: number;
     readonly contextMismatches: number;
+    /** Deliveries whose Document_Type could not be determined. */
+    readonly unattributed: number;
     readonly achievedRatePerSec: number;
+  };
+  /** How many deliveries carried the TamaDB-* headers. */
+  readonly protocolMetadata: {
+    readonly present: number;
+    readonly absent: number;
+    readonly partial: number;
   };
   readonly respondedStatus: Record<string, number>;
   readonly byDocumentType: Record<string, number>;
@@ -53,7 +63,13 @@ export function buildConsumerSummaryJson(metrics: ConsumerMetrics, meta: Consume
       redeliveries: metrics.redeliveries,
       missingHeaderDeliveries: metrics.missingHeaderDeliveries,
       contextMismatches: metrics.contextMismatches,
+      unattributed: metrics.unattributed,
       achievedRatePerSec: round(achievedRatePerSec, 2),
+    },
+    protocolMetadata: {
+      present: metrics.headersPresent,
+      absent: metrics.headersAbsent,
+      partial: metrics.headersPartial,
     },
     respondedStatus: mapToObject(metrics.respondedStatus),
     byDocumentType: mapToObject(metrics.byDocumentType),
@@ -75,18 +91,30 @@ export function formatConsumerSummaryHuman(metrics: ConsumerMetrics, meta: Consu
   lines.push(`Duration      : ${(meta.durationMs / 1000).toFixed(2)} s`);
   lines.push(`Received      : ${t.received} attempts  (~${t.achievedRatePerSec} /s)`);
   lines.push(`Body format   : raw ${t.raw}  /  envelope ${t.envelope}`);
+  const p = j.protocolMetadata;
+  lines.push(
+    `TamaDB headers: present ${p.present}  /  absent ${p.absent}${p.partial > 0 ? `  /  partial ${p.partial}` : ''}`,
+  );
+  if (t.unattributed > 0) {
+    lines.push(
+      `Unattributed  : ${t.unattributed}  (no Document_Type known, usually raw with no TamaDB-* headers)`,
+    );
+  }
   lines.push(`Redeliveries  : ${t.redeliveries}  (repeat after a failed attempt — expected under retry)`);
   lines.push(`Duplicates    : ${t.duplicates}  (repeat after an acknowledged attempt)`);
   if (t.faultsInjected > 0) {
     lines.push(`Faults inject : ${t.faultsInjected}`);
   }
 
-  // Contract conformance (TamaDB 0.7.0): surfaced only when something is off.
+  // Contract conformance: surfaced only when something is off.
   if (t.missingHeaderDeliveries > 0 || t.contextMismatches > 0) {
     lines.push('');
     lines.push('CONTRACT WARNINGS:');
-    if (t.missingHeaderDeliveries > 0) {
-      lines.push(`  ${t.missingHeaderDeliveries} deliveries lacked required TamaDB-* headers (pre-0.7.0 server?)`);
+    if (p.partial > 0) {
+      lines.push(`  ${p.partial} deliveries had some TamaDB-* headers but not all required ones (or an unparseable TamaDB-Enqueued-At)`);
+    }
+    if (meta.requireHeaders && p.absent > 0) {
+      lines.push(`  ${p.absent} deliveries had no TamaDB-* headers, but --require-headers is set`);
     }
     if (t.contextMismatches > 0) {
       lines.push(`  ${t.contextMismatches} envelope deliveries disagreed with their headers`);
@@ -116,9 +144,9 @@ export function formatConsumerSummaryHuman(metrics: ConsumerMetrics, meta: Consu
 
   const l = j.enqueueToReceiveMs;
   lines.push('');
-  lines.push('Enqueue→receive latency (ms, from TamaDB-Enqueued-At):');
+  lines.push('Enqueue→receive latency (ms, from TamaDB-Enqueued-At or the envelope time key):');
   if (l.count === 0) {
-    lines.push('  (no samples — no usable TamaDB-Enqueued-At)');
+    lines.push('  (no samples — no delivery carried an enqueued-at time)');
   } else {
     lines.push(`  min ${fmt(l.min)}  mean ${fmt(l.mean)}  p50 ${fmt(l.p50)}  p95 ${fmt(l.p95)}  p99 ${fmt(l.p99)}  max ${fmt(l.max)}`);
   }

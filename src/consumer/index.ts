@@ -34,7 +34,9 @@ async function main(): Promise<number> {
   const startClock = performance.now();
 
   const sink = await startSink(cfg);
-  process.stdout.write(`Consumer sink listening on ${sink.listenUrl}  (sink: ${cfg.sinkMode})\n`);
+  process.stdout.write(
+    `Consumer sink listening on ${sink.listenUrl}  (sink: ${cfg.sinkMode}${cfg.print ? ', printing deliveries' : ''})\n`,
+  );
   process.stdout.write('Point a TamaDB subscription callbackUrl here. Ctrl-C to stop.\n');
 
   // Resolve when either a signal or an idle-stop timeout asks us to finish.
@@ -62,6 +64,7 @@ async function main(): Promise<number> {
     startedAt,
     finishedAt: new Date().toISOString(),
     durationMs: performance.now() - startClock,
+    requireHeaders: cfg.requireHeaders,
   };
 
   process.stdout.write(formatConsumerSummaryHuman(sink.metrics, meta) + '\n');

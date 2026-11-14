@@ -1,6 +1,6 @@
 {
   "name": "transmission-emulators",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Producer load-harness and webhook-sink emulators for exercising a running TamaDB over real HTTP. Zero runtime dependencies.",
   "keywords": [
     "tamadb",

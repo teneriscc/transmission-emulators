@@ -21,7 +21,7 @@ It is not on the npm registry. Install the compiled package straight from the
 release:
 
 ```bash
-npm install -g https://github.com/teneriscc/transmission-emulators/releases/download/v0.1.0/transmission-emulators-0.1.0.tgz
+npm install -g https://github.com/teneriscc/transmission-emulators/releases/download/v0.2.0/transmission-emulators-0.2.0.tgz
 tamadb-producer --help
 tamadb-sink --help
 ```
@@ -29,10 +29,10 @@ tamadb-sink --help
 Or run without installing:
 
 ```bash
-npx -p https://github.com/teneriscc/transmission-emulators/releases/download/v0.1.0/transmission-emulators-0.1.0.tgz tamadb-sink --help
+npx -p https://github.com/teneriscc/transmission-emulators/releases/download/v0.2.0/transmission-emulators-0.2.0.tgz tamadb-sink --help
 ```
 
-For another version, replace `0.1.0` in both places in the URL. To remove a
+For another version, replace `0.2.0` in both places in the URL. To remove a
 global install: `npm uninstall -g transmission-emulators`.
 
 ## Compatibility
@@ -40,7 +40,7 @@ global install: `npm uninstall -g transmission-emulators`.
 | Tool | Needs TamaDB | Why |
 |------|--------------|-----|
 | `tamadb-producer` | 0.3.0 or later | Sends the bare-body ingestion format with `TamaDB-*` control headers. |
-| `tamadb-sink` | 0.7.0 or later | Targets the 0.7.0 webhook contract (raw body by default, delivery context in headers). Against an older server it still receives, but reports contract warnings. |
+| `tamadb-sink` | 0.7.0 or later | Handles the 0.7.0 and 0.8.0 webhook contracts: raw body by default, `TamaDB-*` delivery headers always sent (0.7.0) or opt-in (0.8.0). Tested live against 0.7.0; 0.8.0 support follows TamaDB's planned 0.8.0 contract and is not yet tested against a 0.8.0 server. |
 
 ---
 
@@ -91,34 +91,58 @@ tamadb-sink --port 4000 --sink save-jsonl --out out/received.jsonl
 
 # One .json file per delivery
 tamadb-sink --port 4000 --sink file-per-delivery --out out/deliveries
+
+# Watch each delivery arrive (works with any sink mode)
+tamadb-sink --port 4000 --print
 ```
 
-### Webhook contract (TamaDB 0.7.0+)
+With `--print`, each delivery is written to the terminal as it arrives: the time,
+the path, the status the sink returned, the `TamaDB-*` headers (if any) and the
+body exactly as received. Printing every delivery slows the sink under heavy
+load, so leave it off for load tests.
+
+### Webhook contract (TamaDB 0.7.0 and 0.8.0)
+
+TamaDB configures delivery metadata on two independent layers, and the sink
+assumes neither.
 
 **Body.** Chosen per subscription by `options.payloadFormat`:
 
 - **raw** (the default for new subscriptions): the bare projected document, no
   wrapper keys.
-- **envelope** (opt-in): `{ subscriptionId, dId, documentType, path?, document, timestamp }`.
+- **envelope** (opt-in): `{ subscriptionId, dId, documentType, path?, document, enqueuedAt }`.
+  In TamaDB 0.7.0 the time key is `timestamp`; from 0.8.0 it is `enqueuedAt`. The
+  sink accepts either.
 
-Subscriptions created before 0.7.0 keep the format they were created with, so one
-TamaDB can deliver both shapes at once. The sink detects the shape per delivery.
-An envelope is recognised only when all five of its always-present keys are there,
+Subscriptions keep the format they were created with, so one TamaDB can deliver
+both shapes at once. The sink detects the shape per delivery. An envelope is
+recognised only when its four always-present keys and a time key are all there,
 so a business document that merely has a `document` field is not mistaken for one.
 
-**Headers.** On every delivery, in both formats:
+**Headers.** Sent on every delivery in TamaDB 0.7.0. From 0.8.0, sent only when
+the subscription sets `protocolMetadata: true`. When sent, in both formats:
 
 | Header | Value |
 |--------|-------|
 | `TamaDB-Subscription-Id` | the subscription that fired |
 | `TamaDB-Document-Type` | percent-encoded Document_Type |
 | `TamaDB-D-Id` | percent-encoded parts joined by `:` (split on `:` first, then decode each part) |
-| `TamaDB-Enqueued-At` | ISO-8601 UTC, ms precision; equals the envelope `timestamp` |
+| `TamaDB-Enqueued-At` | ISO-8601 UTC, ms precision; equals the envelope's time key |
 | `TamaDB-Path` | only for a node-scoped subscription |
 
-Context comes from the headers for **both** formats, so per-Document_Type,
-per-subscription and per-D-Id tallies and latency all work for raw deliveries. An
-envelope body is cross-checked against its headers.
+When the headers are sent, context comes from them for **both** formats, so
+per-Document_Type, per-subscription and per-D-Id tallies and latency all work for
+raw deliveries, and an envelope body is cross-checked against its headers.
+
+**Without headers** (the 0.8.0 default), an envelope still carries its own context.
+A raw delivery carries none: the sink counts it as *unattributed*, with no
+latency sample and no redelivery/duplicate tracking. Set `protocolMetadata: true`
+on the subscription if you need that for raw deliveries.
+
+**Missing headers are not an error by default**, because the sink cannot see a
+subscription's settings and so cannot tell an opt-out from a fault. Use
+`--require-headers` when headers must be there (a 0.7.0 server, or an opted-in
+subscription); then a delivery without them is a contract warning.
 
 **Delivery semantics.** Delivery is best-effort and TamaDB's queue is in-memory
 (lost on restart). A non-2xx response or a dropped connection is a failed attempt.
@@ -127,7 +151,11 @@ headers.
 
 ### What the summary reports
 
-- **Enqueue→receive latency**, from `TamaDB-Enqueued-At` to arrival. It includes
+- **TamaDB headers**: how many deliveries carried the `TamaDB-*` headers
+  (present), none (absent) or only some (partial), and how many were
+  unattributed.
+- **Enqueue→receive latency**, from `TamaDB-Enqueued-At` (or the envelope's time
+  key) to arrival. It includes
   TamaDB's pump pickup delay and, on a retry, the backoff wait (the timestamp does
   not change between attempts). It assumes the TamaDB host and this machine agree
   on the time; with TamaDB in a VM or container, clock drift can skew it.
@@ -136,17 +164,18 @@ headers.
   **failed** attempt is a *redelivery* (expected under `retry`). A repeat after an
   **acknowledged** one is a *duplicate* (suspect). Millisecond precision means two
   distinct writes to one D-Id in the same millisecond would read as a duplicate.
-- **Contract warnings**, shown only when a delivery lacks required `TamaDB-*`
-  headers (for example a pre-0.7.0 server) or an envelope disagrees with its
-  headers.
+- **Contract warnings**, shown only when something is off: a delivery with some
+  but not all required `TamaDB-*` headers, an envelope that disagrees with its
+  headers, or (with `--require-headers`) a delivery with no headers at all.
 
 ### Saving
 
 By default a saved file holds the bare body, so a raw-format JSONL diffs directly
 against the producer's input. Only **acknowledged** (2xx) attempts are saved, so
 each delivered job appears once even when faults were injected. Failed attempts
-still count in the summary. Raw bodies no longer carry Document_Type, D-Id or path,
-so add `--save-context` to save `{ "headers": {...}, "body": ... }` instead.
+still count in the summary. Raw bodies don't carry Document_Type, D-Id or path, so
+add `--save-context` to save `{ "headers": {...}, "body": ... }` instead (the
+headers object is empty when TamaDB sent none).
 
 ### Fault injection
 
