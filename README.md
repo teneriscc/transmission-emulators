@@ -15,8 +15,13 @@ have **zero runtime dependencies**, and need Node.js 22 or later.
 
 ## Install
 
+The package is distributed as a tarball attached to each
+[GitHub Release](https://github.com/teneriscc/transmission-emulators/releases).
+It is not on the npm registry. Install the compiled package straight from the
+release:
+
 ```bash
-npm install -g transmission-emulators
+npm install -g https://github.com/teneriscc/transmission-emulators/releases/download/v0.1.0/transmission-emulators-0.1.0.tgz
 tamadb-producer --help
 tamadb-sink --help
 ```
@@ -24,8 +29,11 @@ tamadb-sink --help
 Or run without installing:
 
 ```bash
-npx -p transmission-emulators tamadb-sink --help
+npx -p https://github.com/teneriscc/transmission-emulators/releases/download/v0.1.0/transmission-emulators-0.1.0.tgz tamadb-sink --help
 ```
+
+For another version, replace `0.1.0` in both places in the URL. To remove a
+global install: `npm uninstall -g transmission-emulators`.
 
 ## Compatibility
 
